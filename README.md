@@ -214,6 +214,27 @@ for i, audio_base64 in enumerate(result["audio_files_base64"]):
 print(result["info"])
 ```
 
+#### 批量生成
+
+三个生成接口的 `text` 都可以传入字符串列表。服务会根据当前可用显存、模型大小、精度、`max_new_tokens` 和最长文本长度自动分批：
+
+```python
+data = {
+    "model_name": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+    "text": ["第一段文本。", "第二段文本。", "第三段文本。"],
+    "speaker": "Vivian",
+    "language": "Chinese"
+}
+result = requests.post(
+    "http://127.0.0.1:7860/qwenapi/v1/custom-voice",
+    json=data,
+).json()
+```
+
+原有字符串输入保持兼容；字符串输入设置 `segment_gen: true` 时，每个非空行会作为一个批量条目。直接传入列表时，`segment_gen` 不再拆分列表元素。返回的 `audio_files_base64` 顺序与输入文本一致，WebUI 的分段生成功能使用相同的自适应批量逻辑。
+
+同一请求内的所有文本共享其他参数：Custom Voice 共享 `speaker`、`language` 和 `instruct`，Voice Design 共享 `language` 和 `instruct`，Voice Clone 共享参考音频、`ref_text` 和 `language`。当前 Web API 不接受这些参数的逐条列表。
+
 ### 2. 声音设计 (Voice Design)
 
 **端点**: `POST /qwenapi/v1/voice-design`
@@ -346,7 +367,56 @@ result = response.json()
 print("当前配置:", result)
 ```
 
-### 8. 中断当前任务
+### 8. 查询推荐批量数量
+
+**端点**: `GET /qwenapi/v1/capacity`
+
+该接口只做估算，不会加载或下载模型。
+
+| 参数 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `model_name` | 是 | - | 模型名称或本地路径 |
+| `max_new_tokens` | 否 | 当前配置值 | 必须大于等于 1 |
+| `text_length` | 否 | `200` | 本批文本中最长一条的字符数，必须大于等于 1 |
+
+```python
+import requests
+
+params = {
+    "model_name": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+    "max_new_tokens": 2048,
+    "text_length": 200
+}
+capacity = requests.get(
+    "http://127.0.0.1:7860/qwenapi/v1/capacity",
+    params=params,
+).json()
+print(capacity["recommended_batch_size"])
+```
+
+响应示例（数值随设备和当前显存占用变化）：
+
+```json
+{
+  "model_name": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+  "model_size_billion": 1.7,
+  "dtype": "torch.bfloat16",
+  "device": "cuda:0",
+  "model_loaded": false,
+  "total_memory_mb": 10239,
+  "free_memory_mb": 9071,
+  "estimated_model_memory_mb": 3728,
+  "estimated_per_item_memory_mb": 512,
+  "recommended_batch_size": 6,
+  "max_new_tokens": 2048,
+  "text_length": 200,
+  "note": "Estimate only; actual capacity depends on text length, generated audio length and memory fragmentation."
+}
+```
+
+模型规模从名称中的 `0.6B`、`1.7B` 等标记推断；无法从本地路径或自定义名称识别时按 `1.7B` 保守估算。`model_loaded` 表示目标模型是否已经加载。推荐值保留 20% 显存余量且最高为 32；查询结果只是当前快照，不会预留显存，也不保证实际生成一定不会显存不足。
+
+### 9. 中断当前任务
 
 **端点**: `POST /qwenapi/v1/interrupt`
 

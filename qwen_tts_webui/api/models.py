@@ -12,7 +12,7 @@ class CustomVoiceRequest(BaseModel):
     """声音生成请求模型"""
 
     model_name: str = Field(description="模型名称")
-    text: str = Field(description="待合成文本")
+    text: str | list[str] = Field(description="待合成文本, 支持字符串或字符串列表")
     instruct: str = Field(default="", description="声音特征描述")
     speaker: Optional[str] = Field(default=None, description="发言人标识")
     language: Optional[str] = Field(default=None, description="语言标识")
@@ -33,7 +33,7 @@ class VoiceDesignRequest(BaseModel):
     """声音设计请求模型"""
 
     model_name: str = Field(description="模型名称")
-    text: str = Field(description="待合成文本")
+    text: str | list[str] = Field(description="待合成文本, 支持字符串或字符串列表")
     instruct: str = Field(description="声音特征描述")
     language: Optional[str] = Field(default=None, description="语言标识")
     segment_gen: bool = Field(default=False, description="是否分段生成")
@@ -53,7 +53,7 @@ class VoiceCloneRequest(BaseModel):
     """声音克隆请求模型"""
 
     model_name: str = Field(description="模型名称")
-    text: str = Field(description="待合成文本")
+    text: str | list[str] = Field(description="待合成文本, 支持字符串或字符串列表")
     language: Optional[str] = Field(default=None, description="语言标识")
     ref_audio_base64: str = Field(description="参考音频文件的 Base64 编码")
     ref_text: Optional[str] = Field(default=None, description="参考音频文本描述")
@@ -122,6 +122,24 @@ class OptionsResponse(BaseModel):
     subtalker_top_p: float
     subtalker_temperature: float
     max_new_tokens: int
+
+
+class CapacityResponse(BaseModel):
+    """Batch capacity estimate response."""
+
+    model_name: str = Field(description="模型名称或本地路径")
+    model_size_billion: float = Field(description="从模型名称推断的参数规模, 单位为十亿")
+    dtype: str = Field(description="当前配置的推理精度")
+    device: str = Field(description="用于估算的计算设备")
+    model_loaded: bool = Field(description="目标模型当前是否已加载")
+    total_memory_mb: int = Field(description="设备总内存, 单位 MB")
+    free_memory_mb: int = Field(description="设备当前可用内存, 单位 MB")
+    estimated_model_memory_mb: int = Field(description="模型权重估算占用, 单位 MB")
+    estimated_per_item_memory_mb: int = Field(description="单条生成估算占用, 单位 MB")
+    recommended_batch_size: int = Field(description="当前推荐的单批条目数")
+    max_new_tokens: int = Field(description="估算使用的最大生成 Token 数")
+    text_length: int = Field(description="估算使用的最长文本字符数")
+    note: str = Field(description="估算限制说明")
 
 
 class InterruptResponse(BaseModel):

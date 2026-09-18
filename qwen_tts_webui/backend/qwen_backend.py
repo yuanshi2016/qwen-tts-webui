@@ -241,7 +241,7 @@ class QwenTTSBackend:
         Returns:
             (list[str] | None): 说话者列表, 如果模型不支持指定任何说话者时则返回 None
         """
-        return self.model.get_supported_speakers()
+        return self.model.get_supported_speakers() if self.model is not None else None
 
     def get_supported_languages(
         self,
@@ -251,7 +251,7 @@ class QwenTTSBackend:
         Returns:
             (list[str] | None): 语言列表, 如果模型不支持指定任何语言时则返回 None
         """
-        return self.model.get_supported_languages()
+        return self.model.get_supported_languages() if self.model is not None else None
 
     def count_tokens(
         self,
@@ -284,10 +284,10 @@ class QwenTTSBackend:
 
     def generate_custom_voice(
         self,
-        text: str,
-        speaker: str,
-        language: str | None = None,
-        instruct: str | None = None,
+        text: str | list[str],
+        speaker: str | list[str],
+        language: str | list[str] | None = None,
+        instruct: str | list[str] | None = None,
         do_sample: bool | None = True,
         top_k: int | None = 50,
         top_p: float | None = 1.0,
@@ -298,7 +298,7 @@ class QwenTTSBackend:
         subtalker_top_p: float | None = 1.0,
         subtalker_temperature: float | None = 0.9,
         max_new_tokens: int | None = 2048,
-    ) -> Path:
+    ) -> Path | list[Path]:
         """使用提示词生成音频
 
         Args:
@@ -364,13 +364,14 @@ class QwenTTSBackend:
             self.unload_model()
             raise e
 
-        return self.save_audio(wavs[0], sr)
+        paths = [self.save_audio(wav, sr) for wav in wavs]
+        return paths if isinstance(text, list) else paths[0]
 
     def generate_voice_design(
         self,
-        text: str,
-        instruct: str,
-        language: str | None = None,
+        text: str | list[str],
+        instruct: str | list[str],
+        language: str | list[str] | None = None,
         do_sample: bool | None = True,
         top_k: int | None = 50,
         top_p: float | None = 1.0,
@@ -381,7 +382,7 @@ class QwenTTSBackend:
         subtalker_top_p: float | None = 1.0,
         subtalker_temperature: float | None = 0.9,
         max_new_tokens: int | None = 2048,
-    ) -> Path:
+    ) -> Path | list[Path]:
         """使用提示词生成音频, 并且使用提示词描述声音
 
         Args:
@@ -444,12 +445,13 @@ class QwenTTSBackend:
             self.unload_model()
             raise e
 
-        return self.save_audio(wavs[0], sr)
+        paths = [self.save_audio(wav, sr) for wav in wavs]
+        return paths if isinstance(text, list) else paths[0]
 
     def generate_voice_clone(
         self,
-        text: str,
-        language: str | None = None,
+        text: str | list[str],
+        language: str | list[str] | None = None,
         ref_audio: Path | None = None,
         ref_text: str | None = None,
         x_vector_only_mode: bool | None = False,
@@ -463,7 +465,7 @@ class QwenTTSBackend:
         subtalker_top_p: float | None = 1.0,
         subtalker_temperature: float | None = 0.9,
         max_new_tokens: int | None = 2048,
-    ) -> Path:
+    ) -> Path | list[Path]:
         """使用提示词生成音频, 并利用一段音频克隆声音
 
         Args:
@@ -537,7 +539,8 @@ class QwenTTSBackend:
             self.unload_model()
             raise e
 
-        return self.save_audio(wavs[0], sr)
+        paths = [self.save_audio(wav, sr) for wav in wavs]
+        return paths if isinstance(text, list) else paths[0]
 
     def save_audio(
         self,

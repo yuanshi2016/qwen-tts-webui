@@ -5,14 +5,18 @@ import time
 import traceback
 from pathlib import Path
 from threading import Lock
-from typing import Any, Callable
+from typing import Annotated, Any, Callable
 
 import torch
 import uvicorn
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException, Query
 
 from qwen_tts_webui.api import models
-from qwen_tts_webui.backend.memory_manager import OutOfMemoryError
+from qwen_tts_webui.config_manager import shared
+from qwen_tts_webui.backend.memory_manager import (
+    estimate_batch_capacity,
+    OutOfMemoryError,
+)
 from qwen_tts_webui.config_manager.config import (
     QWEN_TTS_BASE_MODEL_LIST,
     QWEN_TTS_CUSTOM_VOICE_MODEL_LIST,
@@ -65,6 +69,21 @@ def decode_base64_to_audio(
     with open(output_path, "wb") as f:
         f.write(audio_bytes)
     return output_path
+
+
+def normalize_texts(text: str | list[str], segment_gen: bool) -> list[str]:
+    """Normalize API text input into a non-empty batch."""
+    texts = text if isinstance(text, list) else text.splitlines() if segment_gen else [text]
+    texts = [item.strip() for item in texts if item.strip()]
+    if not texts:
+        raise HTTPException(status_code=422, detail="text must contain at least one non-empty item")
+    return texts
+
+
+def iter_batches(items: list[str], batch_size: int):
+    """Yield fixed-size batches."""
+    for index in range(0, len(items), batch_size):
+        yield items[index:index + batch_size]
 
 
 class Api:
@@ -131,6 +150,12 @@ class Api:
             response_model=models.OptionsResponse,
         )
         self.add_api_route(
+            "/qwenapi/v1/capacity",
+            self.get_capacity,
+            methods=["GET"],
+            response_model=models.CapacityResponse,
+        )
+        self.add_api_route(
             "/qwenapi/v1/interrupt",
             self.interrupt,
             methods=["POST"],
@@ -170,10 +195,7 @@ class Api:
                 响应数据
         """
         output_paths: list[str] = []
-        if req.segment_gen:
-            text_list = [x.strip() for x in req.text.splitlines() if x.strip() != ""]
-        else:
-            text_list = [req.text]
+        text_list = normalize_texts(req.text, req.segment_gen)
 
         try:
             start_time = time.perf_counter()
@@ -196,9 +218,11 @@ class Api:
                 actual_language = None if req.language == "auto" or req.language is None else req.language
 
                 # 生成音频
-                for t in text_list:
-                    output_path = get_backend().generate_custom_voice(
-                        text=t,
+                capacity = self.get_capacity(req.model_name, req.max_new_tokens, max(map(len, text_list)))
+                batch_size = capacity.recommended_batch_size
+                for text_batch in iter_batches(text_list, batch_size):
+                    batch_paths = get_backend().generate_custom_voice(
+                        text=text_batch,
                         speaker=actual_speaker,
                         language=actual_language,
                         instruct=req.instruct,
@@ -215,7 +239,7 @@ class Api:
                     )
                     if state.interrupted:
                         raise HTTPException(status_code=500, detail="任务已中断")
-                    output_paths.append(str(output_path))
+                    output_paths.extend(str(path) for path in batch_paths)
 
             # 将音频文件编码为 Base64
             audio_files_base64 = [encode_audio_to_base64(path) for path in output_paths]
@@ -248,10 +272,7 @@ class Api:
                 响应数据
         """
         output_paths: list[str] = []
-        if req.segment_gen:
-            text_list = [x.strip() for x in req.text.splitlines() if x.strip() != ""]
-        else:
-            text_list = [req.text]
+        text_list = normalize_texts(req.text, req.segment_gen)
 
         try:
             start_time = time.perf_counter()
@@ -268,9 +289,11 @@ class Api:
                 actual_language = None if req.language == "auto" or req.language is None else req.language
 
                 # 生成音频
-                for t in text_list:
-                    output_path = get_backend().generate_voice_design(
-                        text=t,
+                capacity = self.get_capacity(req.model_name, req.max_new_tokens, max(map(len, text_list)))
+                batch_size = capacity.recommended_batch_size
+                for text_batch in iter_batches(text_list, batch_size):
+                    batch_paths = get_backend().generate_voice_design(
+                        text=text_batch,
                         instruct=req.instruct,
                         language=actual_language,
                         do_sample=req.do_sample if req.do_sample is not None else opts.do_sample,
@@ -286,7 +309,7 @@ class Api:
                     )
                     if state.interrupted:
                         raise HTTPException(status_code=500, detail="任务已中断")
-                    output_paths.append(str(output_path))
+                    output_paths.extend(str(path) for path in batch_paths)
 
             # 将音频文件编码为 Base64
             audio_files_base64 = [encode_audio_to_base64(path) for path in output_paths]
@@ -319,10 +342,7 @@ class Api:
                 响应数据
         """
         output_paths: list[str] = []
-        if req.segment_gen:
-            text_list = [x.strip() for x in req.text.splitlines() if x.strip() != ""]
-        else:
-            text_list = [req.text]
+        text_list = normalize_texts(req.text, req.segment_gen)
 
         try:
             start_time = time.perf_counter()
@@ -344,9 +364,11 @@ class Api:
                 actual_language = None if req.language == "auto" or req.language is None else req.language
 
                 # 生成音频
-                for t in text_list:
-                    output_path = get_backend().generate_voice_clone(
-                        text=t,
+                capacity = self.get_capacity(req.model_name, req.max_new_tokens, max(map(len, text_list)))
+                batch_size = capacity.recommended_batch_size
+                for text_batch in iter_batches(text_list, batch_size):
+                    batch_paths = get_backend().generate_voice_clone(
+                        text=text_batch,
                         language=actual_language,
                         ref_audio=ref_audio_path,
                         ref_text=req.ref_text,
@@ -364,7 +386,7 @@ class Api:
                     )
                     if state.interrupted:
                         raise HTTPException(status_code=500, detail="任务已中断")
-                    output_paths.append(str(output_path))
+                    output_paths.extend(str(path) for path in batch_paths)
 
             # 清理临时文件
             if ref_audio_path.exists():
@@ -463,6 +485,23 @@ class Api:
             subtalker_temperature=opts.subtalker_temperature,
             max_new_tokens=opts.max_new_tokens,
         )
+
+    def get_capacity(
+        self,
+        model_name: Annotated[str, Query(description="模型名称或本地路径")],
+        max_new_tokens: Annotated[int | None, Query(ge=1, description="最大生成 Token 数, 默认使用当前配置")] = None,
+        text_length: Annotated[int, Query(ge=1, description="批次中最长文本的字符数")] = 200,
+    ) -> models.CapacityResponse:
+        """Estimate the currently recommended inference batch size."""
+        backend = shared.backend
+        capacity = estimate_batch_capacity(
+            model_name=model_name,
+            dtype=getattr(torch, opts.dtype.split(".")[-1]),
+            max_new_tokens=max_new_tokens or opts.max_new_tokens,
+            text_length=text_length,
+            model_loaded=backend is not None and backend.model is not None and backend.model_name == model_name,
+        )
+        return models.CapacityResponse(**capacity)
 
     def interrupt(
         self,

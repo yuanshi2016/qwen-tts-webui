@@ -1,6 +1,7 @@
 """模型内存管理器"""
 
 import gc
+import re
 from enum import Enum
 
 import torch
@@ -371,6 +372,50 @@ def get_free_memory(
 ) -> int | tuple[int, int]:
     """获取空闲内存"""
     return device_manager.get_free_memory(dev, torch_free_too)
+
+
+def estimate_batch_capacity(
+    model_name: str,
+    dtype: torch.dtype,
+    max_new_tokens: int = 2048,
+    text_length: int = 200,
+    model_loaded: bool = False,
+) -> dict:
+    """Estimate a conservative batch size from model size and free memory."""
+    device = get_torch_device()
+    free_bytes = int(get_free_memory(device))
+    if device.type == "cuda":
+        total_bytes = torch.cuda.get_device_properties(device).total_memory
+    else:
+        total_bytes = psutil.virtual_memory().total
+
+    match = re.search(r"(\d+(?:\.\d+)?)B(?:-|$)", model_name, re.IGNORECASE)
+    model_size = float(match.group(1)) if match else 1.7
+    dtype_bytes = torch.empty((), dtype=dtype).element_size()
+    model_bytes = int(model_size * 1_000_000_000 * dtype_bytes * 1.15)
+    # ponytail: heuristic capped at 32; replace with measured per-GPU calibration if estimates prove inaccurate.
+    per_item_bytes = max(
+        512 * 1024**2,
+        int(model_size * 128 * 1024**2 + max_new_tokens * 128 * 1024 + text_length * 64 * 1024),
+    )
+    available_bytes = int(free_bytes * 0.8) - (0 if model_loaded else model_bytes)
+    recommended = max(1, min(32, available_bytes // per_item_bytes))
+
+    return {
+        "model_name": model_name,
+        "model_size_billion": model_size,
+        "dtype": str(dtype),
+        "device": str(device),
+        "model_loaded": model_loaded,
+        "total_memory_mb": total_bytes // 1024**2,
+        "free_memory_mb": free_bytes // 1024**2,
+        "estimated_model_memory_mb": model_bytes // 1024**2,
+        "estimated_per_item_memory_mb": per_item_bytes // 1024**2,
+        "recommended_batch_size": recommended,
+        "max_new_tokens": max_new_tokens,
+        "text_length": text_length,
+        "note": "Estimate only; actual capacity depends on text length, generated audio length and memory fragmentation.",
+    }
 
 
 def cleanup_models() -> None:

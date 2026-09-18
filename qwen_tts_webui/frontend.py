@@ -22,6 +22,7 @@ from qwen_tts_webui.config_manager.config import (
 )
 from qwen_tts_webui.backend.memory_manager import (
     MODEL_PRECISION_LIST,
+    estimate_batch_capacity,
     get_available_devices,
     OutOfMemoryError,
 )
@@ -522,10 +523,19 @@ def create_ui() -> gr.Blocks:
                     attn_implementation=opts.attn_implementation,
                 )
                 actual_speaker, actual_language, speaker_update, language_update = update_metadata(speaker, language)
-                for i, t in enumerate(text_list, start=1):
-                    gr.Info(f"生成音频中 ({i}/{len(text_list)})")
-                    output_path = get_backend().generate_custom_voice(
-                        text=t,
+                capacity = estimate_batch_capacity(
+                    model_name=model_name,
+                    dtype=getattr(torch, opts.dtype.split(".")[-1]),
+                    max_new_tokens=opts.max_new_tokens,
+                    text_length=max(map(len, text_list)),
+                    model_loaded=True,
+                )
+                batch_size = capacity["recommended_batch_size"]
+                for i in range(0, len(text_list), batch_size):
+                    text_batch = text_list[i:i + batch_size]
+                    gr.Info(f"生成音频中 ({i + 1}-{min(i + batch_size, len(text_list))}/{len(text_list)})")
+                    batch_paths = get_backend().generate_custom_voice(
+                        text=text_batch,
                         speaker=actual_speaker,
                         language=actual_language,
                         instruct=instruct,
@@ -542,7 +552,7 @@ def create_ui() -> gr.Blocks:
                     )
                     if state.interrupted:
                         return None, speaker_update, language_update
-                    output_paths.append(str(output_path))
+                    output_paths.extend(str(path) for path in batch_paths)
 
                 gr.Info(f"音频生成完成, 耗时: {(time.perf_counter() - start_time):.2f}s")
                 return output_paths, speaker_update, language_update
@@ -590,10 +600,19 @@ def create_ui() -> gr.Blocks:
                     attn_implementation=opts.attn_implementation,
                 )
                 actual_language, language_update = update_metadata_simple(language)
-                for i, t in enumerate(text_list, start=1):
-                    gr.Info(f"生成音频中 ({i}/{len(text_list)})")
-                    output_path = get_backend().generate_voice_design(
-                        text=t,
+                capacity = estimate_batch_capacity(
+                    model_name=model_name,
+                    dtype=getattr(torch, opts.dtype.split(".")[-1]),
+                    max_new_tokens=opts.max_new_tokens,
+                    text_length=max(map(len, text_list)),
+                    model_loaded=True,
+                )
+                batch_size = capacity["recommended_batch_size"]
+                for i in range(0, len(text_list), batch_size):
+                    text_batch = text_list[i:i + batch_size]
+                    gr.Info(f"生成音频中 ({i + 1}-{min(i + batch_size, len(text_list))}/{len(text_list)})")
+                    batch_paths = get_backend().generate_voice_design(
+                        text=text_batch,
                         instruct=instruct,
                         language=actual_language,
                         do_sample=opts.do_sample,
@@ -609,7 +628,7 @@ def create_ui() -> gr.Blocks:
                     )
                     if state.interrupted:
                         return None, language_update
-                    output_paths.append(str(output_path))
+                    output_paths.extend(str(path) for path in batch_paths)
 
                 gr.Info(f"音频生成完成, 耗时: {(time.perf_counter() - start_time):.2f}s")
                 return output_paths, language_update
@@ -663,10 +682,19 @@ def create_ui() -> gr.Blocks:
                     attn_implementation=opts.attn_implementation,
                 )
                 actual_language, language_update = update_metadata_simple(language)
-                for i, t in enumerate(text_list, start=1):
-                    gr.Info(f"生成音频中 ({i}/{len(text_list)})")
-                    output_path = get_backend().generate_voice_clone(
-                        text=t,
+                capacity = estimate_batch_capacity(
+                    model_name=model_name,
+                    dtype=getattr(torch, opts.dtype.split(".")[-1]),
+                    max_new_tokens=opts.max_new_tokens,
+                    text_length=max(map(len, text_list)),
+                    model_loaded=True,
+                )
+                batch_size = capacity["recommended_batch_size"]
+                for i in range(0, len(text_list), batch_size):
+                    text_batch = text_list[i:i + batch_size]
+                    gr.Info(f"生成音频中 ({i + 1}-{min(i + batch_size, len(text_list))}/{len(text_list)})")
+                    batch_paths = get_backend().generate_voice_clone(
+                        text=text_batch,
                         language=actual_language,
                         ref_audio=Path(ref_audio),
                         ref_text=ref_text,
@@ -684,7 +712,7 @@ def create_ui() -> gr.Blocks:
                     )
                     if state.interrupted:
                         return None, language_update
-                    output_paths.append(str(output_path))
+                    output_paths.extend(str(path) for path in batch_paths)
 
                 gr.Info(f"音频生成完成, 耗时: {(time.perf_counter() - start_time):.2f}s")
                 return output_paths, language_update
